@@ -9,8 +9,8 @@ import quopri
 import argparse
 
 # Configuration (Edit these values)
-EMAIL = 'test@gmail.com'
-APP_PASSWORD = 'xxxx xxxx xxxx xxxx'
+EMAIL = 'priiiinplup@gmail.com'
+APP_PASSWORD = 'acno agxn wnex khbr'  # App password for Gmail
 OUTPUT_FILE = 'results.csv'  # Output CSV filename
 IMAP_SERVER = 'imap.gmail.com'
 IMAP_PORT = 993
@@ -57,17 +57,17 @@ def get_email_body(msg):
             payload = msg.get_payload(decode=True)
             charset = msg.get_content_charset() or 'utf-8'
             if payload:
+                # handle quoted-printable
+                if msg.get('Content-Transfer-Encoding', '').lower() == 'quoted-printable':
+                    payload = quopri.decodestring(payload)
                 body_parts.append(payload.decode(charset, errors='replace'))
         except Exception:
             pass
-    return '\n'.join(body_parts)
+    return "\n".join(body_parts)
 
-def find_code_pattern(text, search_string):
-    """Find the search_string in text allowing for spaces/special chars"""
-    # escape and then allow any characters between each character
-    escaped = re.escape(search_string.upper())
-    pattern = r'\s*'.join(list(escaped))
-    return re.search(pattern, text, re.IGNORECASE)
+def find_code_pattern(text, code):
+    """Return True if the normalized code appears in the text"""
+    return bool(re.search(re.escape(code.upper()), text))
 
 def main(days_back, search_string):
     # 1) connect & login
@@ -83,16 +83,18 @@ def main(days_back, search_string):
     status, data = mail.search(None, search_criteria)
     if status != 'OK':
         print("❌ Error searching emails")
+        mail.logout()
         return
 
     email_ids = data[0].split()
     total = len(email_ids)
-    print(f"🔍 Found {total} emails since {date_since}. Searching now...")
 
     results = []
 
     # 4) fetch and scan each email
-    for eid in email_ids:
+    for idx, eid in enumerate(email_ids, start=1):
+        # show progress
+        print(f"🔎 Searching email {idx}/{total}", end='\r')
         try:
             st, msg_data = mail.fetch(eid, '(RFC822)')
             if st != 'OK':
@@ -102,8 +104,8 @@ def main(days_back, search_string):
 
             # parse all addresses in To:
             to_hdr = msg.get('To', '')
-            recipients = [addr.lower() for _, addr in getaddresses([to_hdr]) if addr]
-            if not recipients:
+            addresses = [addr for name, addr in getaddresses([to_hdr])]
+            if not addresses:
                 continue
 
             # extract & clean body
@@ -112,20 +114,19 @@ def main(days_back, search_string):
 
             # look for the code
             if find_code_pattern(cleaned, search_string):
-                for r in recipients:
+                for r in addresses:
                     results.append([r, search_string.upper()])
 
         except Exception as e:
-            print(f"⚠️  Error processing email {eid.decode()}: {e}")
+            # on error, skip this email
             continue
 
-    # 5) write CSV
-    with open(OUTPUT_FILE, 'w', newline='') as csvfile:
+    # 5) write CSV — only email addresses
+    with open(OUTPUT_FILE, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(['email_address', 'code_found'])
-        writer.writerows(results)
-
-    # 6) summary
+        for email_addr, _ in results:
+            writer.writerow([email_addr])
+    
     print(f"✅ Searched {total} emails. Found {len(results)} matches.")
     print(f"📄 Results saved to {OUTPUT_FILE}")
 
