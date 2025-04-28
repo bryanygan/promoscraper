@@ -6,7 +6,7 @@ import email as email_module
 import re
 from datetime import datetime, timedelta
 from email.header import decode_header
-from email.utils import getaddresses
+from email.utils import getaddresses, parsedate_to_datetime
 import quopri
 import sqlite3
 from cryptography.fernet import Fernet
@@ -101,7 +101,7 @@ async def validate_credentials(email, app_password):
 async def search_promo(interaction: discord.Interaction, days_back: int, search_code: str):
     """Search for promo codes using slash command"""
     # Defer response while processing
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
     
     email, password = await get_credentials(str(interaction.user.id))
     
@@ -212,16 +212,19 @@ def find_code_pattern(text, code):
     return bool(re.search(re.escape(code.upper()), text))
 
 
-async def search_emails(user_email, app_password, days_back, search_code):    
+async def search_emails(email, app_password, days_back, search_code):
     loop = asyncio.get_event_loop()
     try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
-        await loop.run_in_executor(None, mail.login, user_email, app_password)
+        # offload the blocking connect
+        mail = await loop.run_in_executor(
+            None,
+            lambda: imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+        )
+        await loop.run_in_executor(None, mail.login, email, app_password)
         await loop.run_in_executor(None, mail.select, 'inbox')
 
         date_since = (datetime.now() - timedelta(days=days_back)).strftime("%d-%b-%Y")
         status, data = await loop.run_in_executor(None, mail.search, None, f'(SINCE "{date_since}")')
-        
         if status != 'OK':
             return []
 
@@ -235,20 +238,38 @@ async def search_emails(user_email, app_password, days_back, search_code):
 
             msg = email_module.message_from_bytes(msg_data[0][1])
             to_hdr = msg.get('To', '')
-            addresses = [addr for name, addr in getaddresses([to_hdr])]
-            
+            addresses = [addr for _, addr in getaddresses([to_hdr])]
+
             body = get_email_body(msg)
             cleaned = clean_text(body)
 
             if find_code_pattern(cleaned, search_code):
-                results.extend(addresses)
+                # parse sent date and compute expiry (MM-DD only)
+                date_hdr = msg.get('Date', '')
+                try:
+                    sent_dt    = parsedate_to_datetime(date_hdr)
+                    expiry_dt  = sent_dt + timedelta(days=14)
+                    expiry_str = expiry_dt.strftime('%m-%d')
+                except Exception:
+                    expiry_str = 'unknown'
+
+                for addr in addresses:
+                    results.append(f"{addr} — expires {expiry_str}")
 
         await loop.run_in_executor(None, mail.close)
         await loop.run_in_executor(None, mail.logout)
-        return list(set(results))  # Remove duplicates
+
+        # dedupe while preserving order
+        seen = set()
+        uniq = []
+        for line in results:
+            if line not in seen:
+                seen.add(line)
+                uniq.append(line)
+        return uniq
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error: {e}")
         return None
 
 
