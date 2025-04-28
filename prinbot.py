@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+from typing import Optional
 import imaplib
 import email as email_module
 import re
@@ -273,5 +274,86 @@ async def search_emails(email, app_password, days_back, search_code):
         return None
 
 
+
+async def search_otp(
+    user_email: str,
+    app_password: str,
+    target_addr: str,
+    days_back: int = 1
+) -> Optional[str]:
+    """
+    Search the last `days_back` days for the most recent message TO `target_addr`,
+    then extract the 4-digit OTP from the <td class="p2b"> element.
+    """
+    loop = asyncio.get_event_loop()
+
+    # connect off‐loop
+    mail = await loop.run_in_executor(
+        None, lambda: imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+    )
+    await loop.run_in_executor(None, mail.login, user_email, app_password)
+    await loop.run_in_executor(None, mail.select, 'inbox')
+
+    # search recent mail
+    date_since = (datetime.now() - timedelta(days=days_back)).strftime("%d-%b-%Y")
+    status, data = await loop.run_in_executor(
+        None, mail.search, None, f'(SINCE "{date_since}")'
+    )
+    if status != 'OK':
+        await loop.run_in_executor(None, mail.close)
+        await loop.run_in_executor(None, mail.logout)
+        return None
+
+    otp: Optional[str] = None
+    # scan newest→oldest
+    for eid in reversed(data[0].split()):
+        st, msg_data = await loop.run_in_executor(None, mail.fetch, eid, '(RFC822)')
+        if st != 'OK':
+            continue
+
+        msg = email_module.message_from_bytes(msg_data[0][1])
+        to_addrs = [addr for _, addr in getaddresses([msg.get('To', '')])]
+        if target_addr not in to_addrs:
+            continue
+
+        body = get_email_body(msg)
+
+        # HTML-based regex for the OTP cell
+        m = re.search(
+            r'<td[^>]*class=["\']p2b["\'][^>]*>\s*(\d{4})\s*</td>',
+            body,
+            flags=re.IGNORECASE
+        )
+        if m:
+            otp = m.group(1)
+            break
+
+    # clean up
+    await loop.run_in_executor(None, mail.close)
+    await loop.run_in_executor(None, mail.logout)
+    return otp
+
+
+@bot.tree.command(name="grab", description="Grab the latest OTP for a forwarded email address")
+@app_commands.describe(
+    target_address="The email address that received the OTP you want to retrieve"
+)
+async def grab(interaction: discord.Interaction, target_address: str):
+    # show thinking state ephemerally
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(f"🔍 Looking for OTP for `{target_address}`...", ephemeral=True)
+
+    user_email, password = await get_credentials(str(interaction.user.id))
+    if not user_email or not password:
+        return await interaction.followup.send(
+            "❌ Please set your credentials first with `/setcreds`.",
+            ephemeral=True
+        )
+
+    otp = await search_otp(user_email, password, target_address)
+    if otp:
+        await interaction.followup.send({otp})
+    else:
+        await interaction.followup.send(f"❌ Couldn’t find an OTP for `{target_address}`.")
 if __name__ == '__main__':
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
