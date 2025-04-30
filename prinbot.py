@@ -14,6 +14,7 @@ from cryptography.fernet import Fernet
 import asyncio
 import os
 import io
+import time
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -277,6 +278,7 @@ async def search_emails(email, app_password, days_back, search_code):
     except Exception as e:
         print(f"Error: {e}")
         return None
+    pass 
 
 async def search_otp(
     user_email: str,
@@ -362,6 +364,7 @@ async def grab(interaction: discord.Interaction, target_address: str):
     else:
         await interaction.followup.send(f"❌ Couldn’t find an OTP for `{target_address}`.")
 
+
 @bot.tree.command(
     name="searchselect",
     description="Search your inbox for the WELCOME25B promo code"
@@ -370,31 +373,30 @@ async def grab(interaction: discord.Interaction, target_address: str):
     days_back="How many days back to search (default 3)"
 )
 async def searchselect(interaction: discord.Interaction, days_back: int = 3):
-    # defer publicly
     await interaction.response.defer()
 
-    # load stored credentials
     user_email, password = await get_credentials(str(interaction.user.id))
     if not user_email or not password:
         return await interaction.followup.send(
             "❌ Please set your credentials first with `/setcreds`."
         )
 
-    # search specifically for WELCOME25B
+    # ─── timing start ──────────────────────────────────────────────────────────
+    start = time.monotonic()
     results = await search_emails(user_email, password, days_back, "WELCOME25B")
+    elapsed = time.monotonic() - start
+    print(f"[searchselect] search_emails took {elapsed:.3f} seconds")
+    # ────────────────────────────────────────────────────────────────────────────
+
     if results is None:
         return await interaction.followup.send("❌ Error accessing your inbox.")
     if not results:
         return await interaction.followup.send("❌ No matching emails found.")
 
     # strip out just the email addresses
-    addrs = []
-    for entry in results:
-        # entry might be "addr — expires MM-DD" or just "addr"
-        addr = entry.split(" — ")[0]
-        addrs.append(addr)
-
+    addrs = [entry.split(" — ")[0] for entry in results]
     output = "\n".join(addrs)
+
     if len(output) > 1900:
         await interaction.followup.send(
             file=discord.File(io.StringIO(output), filename="welcome25b_emails.txt")
