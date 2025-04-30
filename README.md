@@ -57,8 +57,8 @@ A Discord bot that scrapes your Gmail inbox for promo codes and one-time passwor
 
 ```bash
 # Clone this repository
-git clone https://github.com/bryanygan/discord-promo-otp-bot.git
-cd discord-promo-otp-bot
+git clone https://github.com/bryanygan/promoscraper.git
+cd promoscraper
 
 # (Recommended) Create a virtual environment
 python3 -m venv venv
