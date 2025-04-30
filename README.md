@@ -35,7 +35,6 @@ A Discord bot that scrapes your Gmail inbox for promo codes and one-time passwor
 - **Credential Management**: Securely store your Gmail address and app-specific IMAP password via `/setcreds`.
 - **Promo Search** (`/searchpromo`): Search for a specific promo code across recent emails and list matching addresses (with expiry if enabled).
 - **OTP Grabber** (`/grab`): Automatically find and return a 4-digit verification code sent to a forwarded address.
-- **Bulk Promo Scan** (`/searchall`): Scan all emails in a date range for any promo codes (subject must contain `$14+`).
 - **Preset Promo Lookup** (`/searchselect`): Quickly find all addresses that received the `WELCOME25B` promo.
 
 ## Architecture
@@ -58,7 +57,7 @@ A Discord bot that scrapes your Gmail inbox for promo codes and one-time passwor
 
 ```bash
 # Clone this repository
-git clone https://github.com/yourusername/discord-promo-otp-bot.git
+git clone https://github.com/bryanygan/discord-promo-otp-bot.git
 cd discord-promo-otp-bot
 
 # (Recommended) Create a virtual environment
@@ -95,7 +94,6 @@ export IMAP_PORT=993
 | `/setcreds`         | Store your Gmail address and app password securely               |
 | `/searchpromo`      | Search for any promo code: `/searchpromo <days_back> <code>`     |
 | `/grab`             | Grab a 4-digit OTP sent to a forwarded address: `/grab <address>` |
-| `/searchall`        | Bulk scan for promos ≥ $14: `/searchall [days_back]`              |
 | `/searchselect`     | Find all that received `WELCOME25B`: `/searchselect [days_back]` |
 
 ### Examples
@@ -109,9 +107,6 @@ export IMAP_PORT=993
 
 # Grab OTP for a forwarded alias
 /grab alias123@forwarder.com
-
-# Scan all promo codes in the last week
-/searchall 7
 
 # Find everyone who got WELCOME25B in the last 3 days
 /searchselect 3
@@ -129,6 +124,3 @@ export IMAP_PORT=993
 - **Authentication Errors**: Verify 2FA + app password combo, and that IMAP is enabled in Gmail.
 - **Wrong OTP or No Matches**: Add logging around `get_email_body()` to inspect parsed content.
 
-## License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
