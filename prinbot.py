@@ -153,9 +153,14 @@ async def search_promo(interaction: discord.Interaction, days_back: int, search_
 
 @bot.event
 async def on_ready():
-    # Sync commands globally
+    # Allow /grab in DMs
+    cmd = bot.tree.get_command("grab")
+    if cmd:
+        cmd.dm_permission = True
+
+    # Sync globally (or to a guild) *after* toggling dm_permission
     await bot.tree.sync()
-    print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
+    print(f'Logged in as {bot.user} — commands synced!')
     print(f'Commands synced globally!')
 
 def decode_mime(s):
@@ -273,8 +278,6 @@ async def search_emails(email, app_password, days_back, search_code):
         print(f"Error: {e}")
         return None
 
-
-
 async def search_otp(
     user_email: str,
     app_password: str,
@@ -334,7 +337,10 @@ async def search_otp(
     return otp
 
 
-@bot.tree.command(name="grab", description="Grab the latest OTP for a forwarded email address")
+@bot.tree.command(
+    name="grab",
+    description="Grab the latest OTP for a forwarded email address"
+)
 @app_commands.describe(
     target_address="The email address that received the OTP you want to retrieve"
 )
@@ -352,8 +358,49 @@ async def grab(interaction: discord.Interaction, target_address: str):
 
     otp = await search_otp(user_email, password, target_address)
     if otp:
-        await interaction.followup.send({otp})
+        await interaction.followup.send(otp)
     else:
         await interaction.followup.send(f"❌ Couldn’t find an OTP for `{target_address}`.")
+
+@bot.tree.command(
+    name="searchselect",
+    description="Search your inbox for the WELCOME25B promo code"
+)
+@app_commands.describe(
+    days_back="How many days back to search (default 3)"
+)
+async def searchselect(interaction: discord.Interaction, days_back: int = 3):
+    # defer publicly
+    await interaction.response.defer()
+
+    # load stored credentials
+    user_email, password = await get_credentials(str(interaction.user.id))
+    if not user_email or not password:
+        return await interaction.followup.send(
+            "❌ Please set your credentials first with `/setcreds`."
+        )
+
+    # search specifically for WELCOME25B
+    results = await search_emails(user_email, password, days_back, "WELCOME25B")
+    if results is None:
+        return await interaction.followup.send("❌ Error accessing your inbox.")
+    if not results:
+        return await interaction.followup.send("❌ No matching emails found.")
+
+    # strip out just the email addresses
+    addrs = []
+    for entry in results:
+        # entry might be "addr — expires MM-DD" or just "addr"
+        addr = entry.split(" — ")[0]
+        addrs.append(addr)
+
+    output = "\n".join(addrs)
+    if len(output) > 1900:
+        await interaction.followup.send(
+            file=discord.File(io.StringIO(output), filename="welcome25b_emails.txt")
+        )
+    else:
+        await interaction.followup.send(f"```\n{output}\n```")
+
 if __name__ == '__main__':
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
