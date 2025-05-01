@@ -15,10 +15,13 @@ import asyncio
 import os
 import io
 import time
+import logging
 
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
 
 # Configuration
 IMAP_SERVER = 'imap.gmail.com'
@@ -361,32 +364,6 @@ async def search_otp(
 
 
 @bot.tree.command(
-    name="grab",
-    description="Grab the latest OTP for a forwarded email address"
-)
-@app_commands.describe(
-    target_address="The email address that received the OTP you want to retrieve"
-)
-async def grab(interaction: discord.Interaction, target_address: str):
-    # show thinking state ephemerally
-    await interaction.response.defer(ephemeral=True)
-    await interaction.followup.send(f"🔍 Looking for OTP for `{target_address}`...", ephemeral=True)
-
-    user_email, password = await get_credentials(str(interaction.user.id))
-    if not user_email or not password:
-        return await interaction.followup.send(
-            "❌ Please set your credentials first with `/setcreds`.",
-            ephemeral=True
-        )
-
-    otp = await search_otp(user_email, password, target_address)
-    if otp:
-        await interaction.followup.send(otp)
-    else:
-        await interaction.followup.send(f"❌ Couldn’t find an OTP for `{target_address}`.")
-
-
-@bot.tree.command(
     name="searchselect",
     description="Search your inbox for the WELCOME25B promo code"
 )
@@ -396,42 +373,91 @@ async def grab(interaction: discord.Interaction, target_address: str):
 async def searchselect(interaction: discord.Interaction, days_back: int = 3):
     await interaction.response.defer()
 
+    start_time = time.time()
+
+    # Credentials
     user_email, password = await get_credentials(str(interaction.user.id))
     if not user_email or not password:
         return await interaction.followup.send(
             "❌ Please set your credentials first with `/setcreds`."
         )
 
-    # Pass subject filter to narrow down emails at the IMAP level
-    results = await search_emails(
-        user_email, 
-        password, 
-        days_back, 
-        "WELCOME25B", 
-        subject_filter="Get $25 off your first 2 orders"  # <-- Added subject filter
+    loop = asyncio.get_event_loop()
+    mail = await loop.run_in_executor(
+        None,
+        lambda: imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
     )
-    # ─── timing start ──────────────────────────────────────────────────────────
-    start = time.monotonic()
-    results = await search_emails(user_email, password, days_back, "WELCOME25B")
-    elapsed = time.monotonic() - start
-    print(f"[searchselect] search_emails took {elapsed:.3f} seconds")
-    # ────────────────────────────────────────────────────────────────────────────
+    await loop.run_in_executor(None, mail.login, user_email, password)
+    await loop.run_in_executor(None, mail.select, 'INBOX')
 
-    if results is None:
-        return await interaction.followup.send("❌ Error accessing your inbox.")
+    # Fast header search
+    since = (datetime.now() - timedelta(days=days_back)).strftime("%d-%b-%Y")
+    status, data = await loop.run_in_executor(
+        None,
+        mail.search,
+        None,
+        f'(SINCE "{since}" HEADER List-Id "uber-eats.3406847380.uber.com")'
+    )
+    if status != 'OK' or not data or not data[0]:
+        await loop.run_in_executor(None, mail.close)
+        await loop.run_in_executor(None, mail.logout)
+        return await interaction.followup.send("❌ No matching emails found.")
+
+    email_ids = data[0].split()
+    total_searched = len(email_ids)
+    results = []
+
+    # Fetch only To & Date headers, build email — expires MM-DD
+    for eid in email_ids:
+        st, hdr = await loop.run_in_executor(
+            None,
+            mail.fetch,
+            eid,
+            '(BODY.PEEK[HEADER.FIELDS (To Date)])'
+        )
+        if st != 'OK' or not hdr or not hdr[0][1]:
+            continue
+
+        raw = hdr[0][1].decode('utf-8', errors='ignore')
+
+        # extract only the To: line
+        to_m = re.search(r'^To:\s*(.+)$', raw, flags=re.MULTILINE)
+        if not to_m:
+            continue
+        to_addrs = [addr for _, addr in getaddresses([to_m.group(1)])]
+
+        # extract Date: then compute expiry
+        d_m = re.search(r'^Date:\s*(.+)$', raw, flags=re.MULTILINE)
+        if not d_m:
+            continue
+        try:
+            sent_dt = parsedate_to_datetime(d_m.group(1))
+            exp_str = (sent_dt + timedelta(days=14)).strftime('%m-%d')
+        except Exception:
+            continue
+
+        for addr in to_addrs:
+            results.append(f"{addr} — expires {exp_str}")
+
+    # Cleanup
+    await loop.run_in_executor(None, mail.close)
+    await loop.run_in_executor(None, mail.logout)
+
+    # Log the count and duration to your terminal
+    elapsed = time.time() - start_time
+    logging.info(f"[searchselect] searched {total_searched} emails in {elapsed:.2f}s")
+
     if not results:
         return await interaction.followup.send("❌ No matching emails found.")
 
-    # strip out just the email addresses
-    addrs = [entry.split(" — ")[0] for entry in results]
-    output = "\n".join(addrs)
-
+    # Send only the results
+    output = "\n".join(results)
     if len(output) > 1900:
         await interaction.followup.send(
             file=discord.File(io.StringIO(output), filename="welcome25b_emails.txt")
         )
     else:
-        await interaction.followup.send(f"```\n{output}\n```")
+        await interaction.followup.send(output)
 
 if __name__ == '__main__':
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
