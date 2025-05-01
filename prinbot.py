@@ -218,11 +218,10 @@ def find_code_pattern(text, code):
     """Return True if the normalized code appears in the text"""
     return bool(re.search(re.escape(code.upper()), text))
 
-
-async def search_emails(email, app_password, days_back, search_code):
+async def search_emails(email, app_password, days_back, search_code, subject_filter=None):
     loop = asyncio.get_event_loop()
     try:
-        # offload the blocking connect
+        # Offload blocking IMAP connection to executor
         mail = await loop.run_in_executor(
             None,
             lambda: imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
@@ -230,8 +229,19 @@ async def search_emails(email, app_password, days_back, search_code):
         await loop.run_in_executor(None, mail.login, email, app_password)
         await loop.run_in_executor(None, mail.select, 'inbox')
 
+        # Build optimized search query
         date_since = (datetime.now() - timedelta(days=days_back)).strftime("%d-%b-%Y")
-        status, data = await loop.run_in_executor(None, mail.search, None, f'(SINCE "{date_since}")')
+        search_criteria = [f'SINCE "{date_since}"']
+        
+        if subject_filter:
+            search_criteria.append(f'SUBJECT "{subject_filter}"')
+            
+        status, data = await loop.run_in_executor(
+            None, 
+            mail.search, 
+            None, 
+            ' '.join(search_criteria))  # Fixed parenthesis here
+        
         if status != 'OK':
             return []
 
@@ -239,7 +249,12 @@ async def search_emails(email, app_password, days_back, search_code):
         results = []
 
         for eid in email_ids:
-            st, msg_data = await loop.run_in_executor(None, mail.fetch, eid, '(RFC822)')
+            st, msg_data = await loop.run_in_executor(
+                None, 
+                mail.fetch, 
+                eid, 
+                '(BODY.PEEK[HEADER] RFC822.SIZE)'
+            )
             if st != 'OK':
                 continue
 
@@ -247,15 +262,27 @@ async def search_emails(email, app_password, days_back, search_code):
             to_hdr = msg.get('To', '')
             addresses = [addr for _, addr in getaddresses([to_hdr])]
 
+            if not addresses:
+                continue
+
+            st, full_msg_data = await loop.run_in_executor(
+                None,
+                mail.fetch,
+                eid,
+                '(RFC822)'
+            )
+            if st != 'OK':
+                continue
+
+            msg = email_module.message_from_bytes(full_msg_data[0][1])
             body = get_email_body(msg)
             cleaned = clean_text(body)
 
             if find_code_pattern(cleaned, search_code):
-                # parse sent date and compute expiry (MM-DD only)
                 date_hdr = msg.get('Date', '')
                 try:
-                    sent_dt    = parsedate_to_datetime(date_hdr)
-                    expiry_dt  = sent_dt + timedelta(days=14)
+                    sent_dt = parsedate_to_datetime(date_hdr)
+                    expiry_dt = sent_dt + timedelta(days=14)
                     expiry_str = expiry_dt.strftime('%m-%d')
                 except Exception:
                     expiry_str = 'unknown'
@@ -266,19 +293,13 @@ async def search_emails(email, app_password, days_back, search_code):
         await loop.run_in_executor(None, mail.close)
         await loop.run_in_executor(None, mail.logout)
 
-        # dedupe while preserving order
+        # Fixed dedupe syntax
         seen = set()
-        uniq = []
-        for line in results:
-            if line not in seen:
-                seen.add(line)
-                uniq.append(line)
-        return uniq
-
-    except Exception as e:
-        print(f"Error: {e}")
+        return [x for x in results if not (x in seen or seen.add(x))]
+        
+    except Exception as e:  # This completes the try statement
+        print(f"Search error: {str(e)}")
         return None
-    pass 
 
 async def search_otp(
     user_email: str,
@@ -381,6 +402,14 @@ async def searchselect(interaction: discord.Interaction, days_back: int = 3):
             "❌ Please set your credentials first with `/setcreds`."
         )
 
+    # Pass subject filter to narrow down emails at the IMAP level
+    results = await search_emails(
+        user_email, 
+        password, 
+        days_back, 
+        "WELCOME25B", 
+        subject_filter="Get $25 off your first 2 orders"  # <-- Added subject filter
+    )
     # ─── timing start ──────────────────────────────────────────────────────────
     start = time.monotonic()
     results = await search_emails(user_email, password, days_back, "WELCOME25B")
