@@ -459,5 +459,111 @@ async def searchselect(interaction: discord.Interaction, days_back: int = 3):
     else:
         await interaction.followup.send(output)
 
+@bot.tree.command(
+    name="usedchecker",
+    description="Find which WELCOME25B accounts have later been updated/used"
+)
+@app_commands.describe(
+    days_back="How many days back to look for promo emails (default 3)"
+)
+async def usedchecker(interaction: discord.Interaction, days_back: int = 3):
+    await interaction.response.defer()
+    start_time = time.time()
+
+    # 1️⃣ Get creds
+    user_email, password = await get_credentials(str(interaction.user.id))
+    if not user_email or not password:
+        return await interaction.followup.send(
+            "❌ Please set your credentials first with `/setcreds`."
+        )
+
+    loop = asyncio.get_event_loop()
+    mail = await loop.run_in_executor(
+        None, lambda: imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+    )
+    await loop.run_in_executor(None, mail.login, user_email, password)
+    await loop.run_in_executor(None, mail.select, "INBOX")
+
+    # 2️⃣ Find all WELCOME25B promo emails by List-Id
+    since = (datetime.now() - timedelta(days=days_back)).strftime("%d-%b-%Y")
+    status, data = await loop.run_in_executor(
+        None,
+        mail.search,
+        None,
+        f'(SINCE "{since}" HEADER List-Id "uber-eats.3406847380.uber.com")'
+    )
+    if status != "OK" or not data or not data[0]:
+        await loop.run_in_executor(None, mail.close)
+        await loop.run_in_executor(None, mail.logout)
+        return await interaction.followup.send("❌ No promo emails found.")
+
+    promo_ids = data[0].split()
+
+    # 3️⃣ Extract each forwarded-to address
+    addrs = set()
+    for eid in promo_ids:
+        st, hdr = await loop.run_in_executor(
+            None,
+            mail.fetch,
+            eid,
+            "(BODY.PEEK[HEADER.FIELDS (To)])"
+        )
+        if st != "OK" or not hdr or not hdr[0][1]:
+            continue
+        raw = hdr[0][1].decode("utf-8", errors="ignore")
+        m = re.search(r"^To:\s*(.+)$", raw, flags=re.MULTILINE)
+        if m:
+            addrs.update(addr for _, addr in getaddresses([m.group(1)]))
+
+    # 4️⃣ Check each address for email- or phone-update messages
+    unused, used = [], []
+    for addr in sorted(addrs):
+        # single-argument SEARCH with quoted criteria
+        st1, d1 = await loop.run_in_executor(
+            None,
+            mail.search,
+            None,
+            f'(TO "{addr}" SUBJECT "your Uber account email was updated")'
+        )
+        st2, d2 = await loop.run_in_executor(
+            None,
+            mail.search,
+            None,
+            f'(TO "{addr}" SUBJECT "your Uber account phone number was updated")'
+        )
+
+        if (st1 == "OK" and d1 and d1[0]) or (st2 == "OK" and d2 and d2[0]):
+            used.append(addr)
+        else:
+            unused.append(addr)
+
+    # 5️⃣ Cleanup
+    await loop.run_in_executor(None, mail.close)
+    await loop.run_in_executor(None, mail.logout)
+
+    # 6️⃣ Log counts & timing
+    elapsed = time.time() - start_time
+    logging.info(
+        f"[usedchecker] scanned {len(promo_ids)} promos, checked {len(addrs)} accounts in {elapsed:.2f}s"
+    )
+
+    # 7️⃣ Send only the lists
+    parts = []
+    if unused:
+        parts.append("**Unused accounts:**\n" + "\n".join(unused))
+    if used:
+        parts.append("**Used accounts:**\n" + "\n".join(used))
+    
+    output = "\n\n".join(parts) or "❌ No accounts found."
+    
+    if len(output) > 1900:
+        fp = io.StringIO(output)
+        await interaction.followup.send(
+            file=discord.File(fp, filename="usedchecker_results.txt")
+        )
+    else:
+        await interaction.followup.send(output)
+
+    
 if __name__ == '__main__':
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
