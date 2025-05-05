@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# test commit
 
 import discord
 from discord import app_commands
