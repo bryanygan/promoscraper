@@ -6,7 +6,7 @@ on:
 
 jobs:
   update:
-    runs-on: self-hosted
+    runs-on: [self-hosted, linux, arm64]
     steps:
       - uses: actions/checkout@v3
       - name: Pull latest changes
