@@ -15,8 +15,8 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          cd /home/pi/promoscraper
-          /home/pi/promoscraper/venv/bin/pip install -r requirements.txt
+          cd /home/bghype/promoscraper
+          /home/bghype/promoscraper/venv/bin/pip install -r requirements.txt
 
       - name: Restart Discord Bot
         run: sudo systemctl restart discordbot.service
