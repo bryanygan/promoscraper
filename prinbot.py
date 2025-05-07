@@ -321,32 +321,47 @@ async def search_emails(email, app_password, days_back, search_code, subject_fil
 @app_commands.describe(
     target_address="The email address that received the OTP you want to retrieve"
 )
+@bot.tree.command(
+    name="grab",
+    description="Grab the latest OTP for a forwarded email address"
+)
+@app_commands.describe(
+    target_address="The email address that received the OTP you want to retrieve"
+)
 async def grab(interaction: discord.Interaction, target_address: str):
     await interaction.response.defer(ephemeral=True)
-    await interaction.followup.send(
-        f"🔍 Looking for OTP for `{target_address}`...", 
-        ephemeral=True
-    )
+    try:
+        await interaction.followup.send(
+            f"🔍 Looking for OTP for `{target_address}`…", 
+            ephemeral=True
+        )
 
-    # 1️⃣ Try per‐user creds first
-    user_email, password = await get_credentials(str(interaction.user.id))
+        # get creds (global fallback)
+        user_email, password = await get_credentials(str(interaction.user.id))
+        if not user_email or not password:
+            if GLOBAL_EMAIL and GLOBAL_APP_PASSWORD:
+                user_email, password = GLOBAL_EMAIL, GLOBAL_APP_PASSWORD
+            else:
+                return await interaction.followup.send(
+                    "❌ Bot owner hasn’t configured credentials.", 
+                    ephemeral=True
+                )
 
-    # 2️⃣ If none, use your GLOBAL_* env vars
-    if not user_email or not password:
-        if GLOBAL_EMAIL and GLOBAL_APP_PASSWORD:
-            user_email, password = GLOBAL_EMAIL, GLOBAL_APP_PASSWORD
+        otp = await search_otp(user_email, password, target_address)
+        if otp:
+            await interaction.followup.send(otp)
         else:
-            return await interaction.followup.send(
-                "❌ Bot owner hasn’t configured the global credentials yet.",
-                ephemeral=True
+            await interaction.followup.send(
+                f"❌ Couldn’t find an OTP for `{target_address}`."
             )
 
-    otp = await search_otp(user_email, password, target_address)
-    if otp:
-        await interaction.followup.send(otp)
-    else:
+    except Exception:
+        # This will print the full traceback to stderr (captured by systemd)
+        logging.exception("Unhandled exception in /grab command")
+        # And let the user know something went wrong
         await interaction.followup.send(
-            f"❌ Couldn’t find an OTP for `{target_address}`."
+            "❌ An internal error occurred. Check the bot logs for details.",
+            ephemeral=True
         )
 
 
