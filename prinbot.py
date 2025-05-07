@@ -605,6 +605,31 @@ async def usedchecker(interaction: discord.Interaction, days_back: int = 3):
     else:
         await interaction.followup.send(output)
 
+async def delete_credentials(user_id):
+    """Delete stored credentials for a user"""
+    conn = sqlite3.connect(DATABASE_NAME)
+    c = conn.cursor()
+    # Delete the user's entry and check if any rows were affected
+    c.execute('DELETE FROM users WHERE user_id = ?', (str(user_id),))
+    rows_deleted = c.rowcount
+    conn.commit()
+    conn.close()
+    return rows_deleted > 0
+
+@bot.tree.command(name="clearcreds", description="Clear your stored email and app password")
+async def clear_credentials(interaction: discord.Interaction):
+    """Clear credentials using slash command"""
+    success = await delete_credentials(str(interaction.user.id))
+    if success:
+        await interaction.response.send_message(
+            "✅ Credentials cleared successfully!",
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            "❌ No credentials found to clear.",
+            ephemeral=True
+        )
     
 if __name__ == '__main__':
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
