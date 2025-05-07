@@ -321,13 +321,6 @@ async def search_emails(email, app_password, days_back, search_code, subject_fil
 @app_commands.describe(
     target_address="The email address that received the OTP you want to retrieve"
 )
-@bot.tree.command(
-    name="grab",
-    description="Grab the latest OTP for a forwarded email address"
-)
-@app_commands.describe(
-    target_address="The email address that received the OTP you want to retrieve"
-)
 async def grab(interaction: discord.Interaction, target_address: str):
     await interaction.response.defer(ephemeral=True)
     try:
