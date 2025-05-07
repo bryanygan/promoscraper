@@ -19,8 +19,6 @@ import io
 import time
 import logging
 
-imaplib.Debug = 4
-
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
@@ -28,10 +26,7 @@ load_dotenv()
 GLOBAL_EMAIL = os.getenv("GLOBAL_EMAIL")
 GLOBAL_APP_PASSWORD = os.getenv("GLOBAL_APP_PASSWORD")
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s %(levelname)s %(name)s: %(message)s',
-)
+logging.basicConfig(level=logging.INFO)
 
 # Configuration
 IMAP_SERVER = 'imap.gmail.com'
@@ -323,38 +318,30 @@ async def search_emails(email, app_password, days_back, search_code, subject_fil
 )
 async def grab(interaction: discord.Interaction, target_address: str):
     await interaction.response.defer(ephemeral=True)
-    try:
-        await interaction.followup.send(
-            f"🔍 Looking for OTP for `{target_address}`…", 
-            ephemeral=True
-        )
+    await interaction.followup.send(
+        f"🔍 Looking for OTP for `{target_address}`...", 
+        ephemeral=True
+    )
 
-        # get creds (global fallback)
-        user_email, password = await get_credentials(str(interaction.user.id))
-        if not user_email or not password:
-            if GLOBAL_EMAIL and GLOBAL_APP_PASSWORD:
-                user_email, password = GLOBAL_EMAIL, GLOBAL_APP_PASSWORD
-            else:
-                return await interaction.followup.send(
-                    "❌ Bot owner hasn’t configured credentials.", 
-                    ephemeral=True
-                )
+    # 1️⃣ Try per‐user creds first
+    user_email, password = await get_credentials(str(interaction.user.id))
 
-        otp = await search_otp(user_email, password, target_address)
-        if otp:
-            await interaction.followup.send(otp)
+    # 2️⃣ If none, use your GLOBAL_* env vars
+    if not user_email or not password:
+        if GLOBAL_EMAIL and GLOBAL_APP_PASSWORD:
+            user_email, password = GLOBAL_EMAIL, GLOBAL_APP_PASSWORD
         else:
-            await interaction.followup.send(
-                f"❌ Couldn’t find an OTP for `{target_address}`."
+            return await interaction.followup.send(
+                "❌ Bot owner hasn’t configured the global credentials yet.",
+                ephemeral=True
             )
 
-    except Exception:
-        # This will print the full traceback to stderr (captured by systemd)
-        logging.exception("Unhandled exception in /grab command")
-        # And let the user know something went wrong
+    otp = await search_otp(user_email, password, target_address)
+    if otp:
+        await interaction.followup.send(otp)
+    else:
         await interaction.followup.send(
-            "❌ An internal error occurred. Check the bot logs for details.",
-            ephemeral=True
+            f"❌ Couldn’t find an OTP for `{target_address}`."
         )
 
 
@@ -364,64 +351,54 @@ async def search_otp(
     target_addr: str,
     days_back: int = 1
 ) -> Optional[str]:
-    logger = logging.getLogger("search_otp")
-    logger.debug("Starting search_otp; target=%s days_back=%d", target_addr, days_back)
-
+    """
+    Search the last `days_back` days for the most recent message TO `target_addr`,
+    then extract the 4-digit OTP from the <td class="p2b"> element.
+    """
     loop = asyncio.get_event_loop()
-    logger.debug("Creating IMAP4_SSL connection…")
+
+    # connect off‐loop
     mail = await loop.run_in_executor(
         None, lambda: imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
     )
-    logger.debug("Logging in as %s …", user_email)
     await loop.run_in_executor(None, mail.login, user_email, app_password)
-
-    logger.debug("Selecting INBOX…")
     await loop.run_in_executor(None, mail.select, 'inbox')
 
+    # search recent mail
     date_since = (datetime.now() - timedelta(days=days_back)).strftime("%d-%b-%Y")
-    logger.debug("Performing search SINCE %s …", date_since)
     status, data = await loop.run_in_executor(
         None, mail.search, None, f'(SINCE "{date_since}")'
     )
-    logger.debug("Search returned status=%s, data=%r", status, data)
     if status != 'OK':
-        logger.error("Search failed, closing connection.")
         await loop.run_in_executor(None, mail.close)
         await loop.run_in_executor(None, mail.logout)
         return None
 
-    ids = data[0].split()
-    logger.debug("Found %d message IDs: %s", len(ids), ids)
-
-    for eid in reversed(ids):
-        logger.debug("Fetching message %s …", eid)
+    otp: Optional[str] = None
+    # scan newest→oldest
+    for eid in reversed(data[0].split()):
         st, msg_data = await loop.run_in_executor(None, mail.fetch, eid, '(RFC822)')
-        logger.debug("Fetch status=%s", st)
         if st != 'OK':
-            logger.warning("Fetch failed for %s; skipping", eid)
             continue
 
         msg = email_module.message_from_bytes(msg_data[0][1])
-        addrs = [addr for _, addr in getaddresses([msg.get('To','')])]
-        logger.debug("To addresses: %s", addrs)
-        if target_addr not in addrs:
-            logger.debug("%s not in %s; continuing", target_addr, addrs)
+        to_addrs = [addr for _, addr in getaddresses([msg.get('To', '')])]
+        if target_addr not in to_addrs:
             continue
 
         body = get_email_body(msg)
-        logger.debug("Body snippet: %r", body[:100])
 
+        # HTML-based regex for the OTP cell
         m = re.search(
             r'<td[^>]*class=["\']p2b["\'][^>]*>\s*(\d{4})\s*</td>',
-            body, flags=re.IGNORECASE
+            body,
+            flags=re.IGNORECASE
         )
-        logger.debug("Regex match: %r", m)
         if m:
             otp = m.group(1)
-            logger.info("Found OTP %s in message %s", otp, eid)
             break
 
-    logger.debug("Cleaning up IMAP connection")
+    # clean up
     await loop.run_in_executor(None, mail.close)
     await loop.run_in_executor(None, mail.logout)
     return otp
