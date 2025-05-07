@@ -23,6 +23,9 @@ import logging
 from dotenv import load_dotenv
 load_dotenv()
 
+GLOBAL_EMAIL = os.getenv("GLOBAL_EMAIL")
+GLOBAL_APP_PASSWORD = os.getenv("GLOBAL_APP_PASSWORD")
+
 logging.basicConfig(level=logging.INFO)
 
 # Configuration
@@ -307,30 +310,40 @@ async def search_emails(email, app_password, days_back, search_code, subject_fil
         return None
 
 @bot.tree.command(
-     name="grab",
-     description="Grab the latest OTP for a forwarded email address"
- )
+    name="grab",
+    description="Grab the latest OTP for a forwarded email address"
+)
 @app_commands.describe(
-     target_address="The email address that received the OTP you want to retrieve"
- )
-
+    target_address="The email address that received the OTP you want to retrieve"
+)
 async def grab(interaction: discord.Interaction, target_address: str):
-     # show thinking state ephemerally
-     await interaction.response.defer(ephemeral=True)
-     await interaction.followup.send(f"🔍 Looking for OTP for `{target_address}`...", ephemeral=True)
- 
-     user_email, password = await get_credentials(str(interaction.user.id))
-     if not user_email or not password:
-         return await interaction.followup.send(
-             "❌ Please set your credentials first with `/setcreds`.",
-             ephemeral=True
-         )
- 
-     otp = await search_otp(user_email, password, target_address)
-     if otp:
-         await interaction.followup.send(otp)
-     else:
-         await interaction.followup.send(f"❌ Couldn’t find an OTP for `{target_address}`.")
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(
+        f"🔍 Looking for OTP for `{target_address}`...", 
+        ephemeral=True
+    )
+
+    # 1️⃣ Try per‐user creds first
+    user_email, password = await get_credentials(str(interaction.user.id))
+
+    # 2️⃣ If none, use your GLOBAL_* env vars
+    if not user_email or not password:
+        if GLOBAL_EMAIL and GLOBAL_APP_PASSWORD:
+            user_email, password = GLOBAL_EMAIL, GLOBAL_APP_PASSWORD
+        else:
+            return await interaction.followup.send(
+                "❌ Bot owner hasn’t configured the global credentials yet.",
+                ephemeral=True
+            )
+
+    otp = await search_otp(user_email, password, target_address)
+    if otp:
+        await interaction.followup.send(otp)
+    else:
+        await interaction.followup.send(
+            f"❌ Couldn’t find an OTP for `{target_address}`."
+        )
+
 
 async def search_otp(
     user_email: str,
