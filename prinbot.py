@@ -14,10 +14,12 @@ import quopri
 import sqlite3
 from cryptography.fernet import Fernet
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import os
 import io
 import time
 import logging
+
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -27,6 +29,14 @@ GLOBAL_EMAIL = os.getenv("GLOBAL_EMAIL")
 GLOBAL_APP_PASSWORD = os.getenv("GLOBAL_APP_PASSWORD")
 
 logging.basicConfig(level=logging.INFO)
+
+# Custom bot subclass to set up thread pool for IMAP operations
+class CustomBot(commands.Bot):
+    async def setup_hook(self):
+        # Increase thread pool for IMAP operations
+        executor = ThreadPoolExecutor(max_workers=20)
+        self.loop.set_default_executor(executor)
+        await super().setup_hook()
 
 # Configuration
 IMAP_SERVER = 'imap.gmail.com'
@@ -41,7 +51,7 @@ cipher_suite = Fernet(ENCRYPTION_KEY)
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = CustomBot(command_prefix='!', intents=intents)
 
 # Database setup
 def init_db():
@@ -502,12 +512,14 @@ async def searchselect(interaction: discord.Interaction, days_back: int = 3):
 
 @bot.tree.command(
     name="usedchecker",
-    description="Find which WELCOME25B accounts have later been updated/used"
-)
+    description="Find which promo code accounts have later been updated/used"
+    )
+
 @app_commands.describe(
-    days_back="How many days back to look for promo emails (default 3)"
+    days_back="How many days back to look for promo emails (default 3)",
+    promo_code="Promo code to look for (default WELCOME25B)"
 )
-async def usedchecker(interaction: discord.Interaction, days_back: int = 3):
+async def usedchecker(interaction: discord.Interaction, days_back: int = 3, promo_code: str = "WELCOME25B"):    
     await interaction.response.defer()
     start_time = time.time()
 
@@ -525,13 +537,13 @@ async def usedchecker(interaction: discord.Interaction, days_back: int = 3):
     await loop.run_in_executor(None, mail.login, user_email, password)
     await loop.run_in_executor(None, mail.select, "INBOX")
 
-    # 2️⃣ Find all WELCOME25B promo emails by List-Id
+    # 2️⃣ Find all promo_code promo emails by List-Id
     since = (datetime.now() - timedelta(days=days_back)).strftime("%d-%b-%Y")
     status, data = await loop.run_in_executor(
         None,
         mail.search,
         None,
-        f'(SINCE "{since}" HEADER List-Id "uber-eats.3406847380.uber.com")'
+        f'(SINCE "{since}" HEADER List-Id "uber-eats.3406847380.uber.com" TEXT "{promo_code}")'
     )
     if status != "OK" or not data or not data[0]:
         await loop.run_in_executor(None, mail.close)
