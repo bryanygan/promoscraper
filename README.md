@@ -1,17 +1,13 @@
 
 # Prin's Bot 
 
-Curated for ZR Eats method users. Allows email promo scraping and OTP grabbing. Hosted locally. Written mostly by ChatGPT and DeepSeek.
+A Discord bot that scrapes your Gmail inbox for promo codes and one-time passwords (OTPs), returning them via slash commands.
+
+Curated for ZR Eats method users, hosted locally. Written mostly by ChatGPT and DeepSeek.
 
 <picture>
   <img alt="prin" src="https://i.imgur.com/r0IGEAc.png">
 </picture>
-
-now for some more chatgpt
-
-# Discord Promo & OTP Scraper Bot
-
-A Discord bot that scrapes your Gmail inbox for promo codes and one-time passwords (OTPs), returning them via slash commands.
 
 ---
 
