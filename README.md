@@ -1,5 +1,4 @@
-
-# Prin's Bot 
+# Prin's Bot  
 
 A Discord bot that scrapes your Gmail inbox for promo codes and one-time passwords (OTPs), returning them via slash commands.
 
@@ -31,7 +30,9 @@ Curated for ZR Eats method users, hosted locally. Written mostly by ChatGPT and 
 - **Credential Management**: Securely store your Gmail address and app-specific IMAP password via `/setcreds`.
 - **Promo Search** (`/searchpromo`): Search for a specific promo code across recent emails and list matching addresses (with expiry if enabled).
 - **OTP Grabber** (`/grab`): Automatically find and return a 4-digit verification code sent to a forwarded address.
-- **Preset Promo Lookup** (`/searchselect`): Quickly find all addresses that received the `WELCOME25B` promo.
+- **Preset Promo Lookup** (`/searchselect`): Quickly find all addresses that received the `WELCOME25B` promo in the past X days.
+- **Used Checker** (`/usedchecker`): Identify which promo code accounts (default `WELCOME25B`) have subsequently been updated or used, optionally specifying a different promo and lookback period.
+- **Credential Clearing** (`/clearcreds`): Remove your stored Gmail credentials.
 
 ## Architecture
 
@@ -85,33 +86,44 @@ export IMAP_PORT=993
 
 ### Slash Commands
 
-| Command             | Description                                                       |
-|---------------------|-------------------------------------------------------------------|
-| `/setcreds`         | Store your Gmail address and app password securely               |
-| `/searchpromo`      | Search for any promo code: `/searchpromo <days_back> <code>`     |
-| `/grab`             | Grab a 4-digit OTP sent to a forwarded address: `/grab <address>` |
-| `/searchselect`     | Find all that received `WELCOME25B`: `/searchselect [days_back]` |
+| Command             | Description                                                                                         |
+|---------------------|-----------------------------------------------------------------------------------------------------|
+| `/setcreds`         | Store your Gmail address and app password securely                                                  |
+| `/searchpromo`      | Search for any promo code: `/searchpromo <days_back> <code>`                                        |
+| `/grab`             | Grab a 4-digit OTP sent to a forwarded address: `/grab <address>`                                   |
+| `/searchselect`     | Find all addresses that received `WELCOME25B`: `/searchselect [days_back]`                          |
+| `/usedchecker`      | Check which promo code accounts have been used or updated: `/usedchecker [days_back] [promo_code]`  |
+| `/clearcreds`       | Clear your stored email and app password                                                            |
 
 ### Examples
 
 ```text
 # Store credentials
-/setcreds youremail@gmail.com ABCDEFGHIJKLMNOP
+/setcreds email:youremail@gmail.com app_password:ABCDEFGHIJKLMNOP
 
 # Search for the code “SAVE20” in the last 5 days
-/searchpromo 5 SAVE20
+/searchpromo days_back:5 search_code:SAVE20
 
 # Grab OTP for a forwarded alias
-/grab alias123@forwarder.com
+/grab target_address:alias123@forwarder.com
 
 # Find everyone who got WELCOME25B in the last 3 days
-/searchselect 3
+/searchselect days_back:3
+
+# Check which WELCOME25B accounts have been used in the last 5 days
+/usedchecker days_back:5
+
+# Check which SAVE20 promo accounts have been used in the last 7 days
+/usedchecker days_back:7 promo_code:SAVE20
+
+# Clear your stored credentials
+/clearcreds
 ```
 
 ## Security
 
 - **Fernet Encryption**: All app-passwords are encrypted at rest in `user_credentials.db`
-- **Ephemeral Responses**: Sensitive commands (`/setcreds`, `/grab`) use ephemeral messages so only you see them
+- **Ephemeral Responses**: Sensitive commands (`/setcreds`, `/grab`, `/clearcreds`) use ephemeral messages so only you see them
 
 ## Troubleshooting
 
@@ -120,3 +132,6 @@ export IMAP_PORT=993
 - **Authentication Errors**: Verify 2FA + app password combo, and that IMAP is enabled in Gmail.
 - **Wrong OTP or No Matches**: Add logging around `get_email_body()` to inspect parsed content.
 
+## License
+
+[MIT](LICENSE.md)
