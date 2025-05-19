@@ -134,4 +134,6 @@ export IMAP_PORT=993
 
 ## License
 
-[MIT](LICENSE.md)
+This project is licensed under the **MIT License**.
+
+
